@@ -1,40 +1,27 @@
 # IdeaScout · 研究 Agent 群
 
+> One question, six experts, one trusted report.
 > 一个问题，六个专家，一份可信任的研究报告。
 
-IdeaScout is a multi-agent research system. Given a topic, it deploys 6 specialized agents to produce a structured research report with confidence scoring and automatic quality improvement loops.
+IdeaScout is a **multi-agent deep research framework**. Given a topic, it orchestrates 6 specialized agents — Planner, Scout, Extractor, Validator, Analyst, and Synthesizer — to produce a structured research report with **confidence scoring**, **contradiction detection**, and automatic **Deep Dive quality loops**.
+
+Built as an open-source [OpenCode/Claude Code skill](SKILL.md), IdeaScout turns any AI coding agent into a self-contained research team.
 
 ---
 
-## How it works
+## Architecture
 
-```
-User Input: "小米 SU7 vs Model 3 对比分析"
-    │
-    ▼
-┌──────────────────────────────────┐
-│ 🎯 Orchestrator                 │ Coordinates all agents
-├──────────────────────────────────┤
-│ 📋 Planner                      │ Decomposes topic into sub-questions
-├──────────────────────────────────┤
-│ 🔍 Scout                        │ Parallel search across 10+ sources
-├──────────────────────────────────┤
-│ 🧬 Extractor                    │ Extracts structured fact cards
-├──────────────────────────────────┤
-│ ✅ Validator                    │ Cross-references, flags contradictions
-├──────────────────────────────────┤
-│ 🔬 Analyst                      │ Identifies patterns, gaps, trends
-├──────────────────────────────────┤
-│ 📊 Synthesizer                  │ Generates final report
-├──────────────────────────────────┤
-│ 🎯 Quality Evaluator            │ Confidence score → trigger Deep Dive
-└──────────────┬───────────────────┘
-               │
-        Score < 80%
-               │
-               ▼
-        Deep Dive → back to Scout
-        (max 3 rounds)
+```mermaid
+flowchart TB
+    A["🎯 Orchestrator<br/>Coordinates all agents"] --> B["📋 Planner<br/>Decomposes topic"]
+    B --> C["🔍 Scout<br/>Parallel search 10+ sources"]
+    C --> D["🧬 Extractor<br/>Structured fact cards"]
+    D --> E["✅ Validator<br/>Cross-reference & flag"]
+    E --> F["🔬 Analyst<br/>Patterns, gaps, trends"]
+    F --> G["📊 Synthesizer<br/>Final report"]
+    G --> H{"🎯 Quality Evaluator<br/>Confidence > 80%?"}
+    H -->|"✅ Yes"| I["📄 Output Report"]
+    H -->|"❌ No < 80%"| C
 ```
 
 ---
