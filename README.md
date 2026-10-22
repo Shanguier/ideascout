@@ -3,122 +3,121 @@
 > One question, six experts, one trusted report.
 > 一个问题，六个专家，一份可信任的研究报告。
 
-IdeaScout is a **multi-agent deep research framework**. Given a topic, it orchestrates 6 specialized agents — Planner, Scout, Extractor, Validator, Analyst, and Synthesizer — to produce a structured research report with **confidence scoring**, **contradiction detection**, and automatic **Deep Dive quality loops**.
+IdeaScout is a small multi-agent research skill. [`SKILL.md`](SKILL.md) is the
+workflow a coding agent follows. [`scripts/research_agent.py`](scripts/research_agent.py)
+is an offline reference demo of that loop and of the confidence formula.
 
-Built as an open-source [OpenCode/Claude Code skill](SKILL.md), IdeaScout turns any AI coding agent into a self-contained research team.
-
----
+The demo walks simulated source cards offline, with no model call, so the
+scoring rules and the Deep Dive stop conditions can be run and tested with the
+Python standard library.
 
 ## Architecture
 
 ```mermaid
 flowchart TB
-    A["🎯 Orchestrator<br/>Coordinates all agents"] --> B["📋 Planner<br/>Decomposes topic"]
-    B --> C["🔍 Scout<br/>Parallel search 10+ sources"]
-    C --> D["🧬 Extractor<br/>Structured fact cards"]
-    D --> E["✅ Validator<br/>Cross-reference & flag"]
-    E --> F["🔬 Analyst<br/>Patterns, gaps, trends"]
-    F --> G["📊 Synthesizer<br/>Final report"]
-    G --> H{"🎯 Quality Evaluator<br/>Confidence > 80%?"}
-    H -->|"✅ Yes"| I["📄 Output Report"]
-    H -->|"❌ No < 80%"| C
+    A["🎯 Orchestrator<br/>Coordinates all agents"] --> B["📋 Planner<br/>Decomposes the topic"]
+    B --> C["🔍 Scout<br/>Gather sources for this round"]
+    C --> D["🧬 Extractor<br/>One fact card per source"]
+    D --> E["✅ Validator<br/>Cross-check and flag conflicts"]
+    E --> F["🔬 Analyst<br/>Observations and coverage gaps"]
+    F --> G["📊 Synthesizer<br/>Report from those cards"]
+    G --> H{"Quality gate"}
+    H -->|"Pass"| I["📄 Output report"]
+    H -->|"Fail, under 3 rounds"| C
 ```
 
----
+The gate stays closed until all of these are true:
 
-## Key Differentiators
+- confidence score is at least 80
+- fewer than 2 sub-questions still lack a second source
+- no contradiction is unresolved
+- no fact is older than 90 days
 
-| Feature | IdeaScout | Perplexity | ChatGPT |
-|---------|-----------|------------|---------|
-| Multi-Agent Collaboration | ✅ 6 agents | ❌ single | ❌ single |
-| Fact Verification | ✅ cross-check | ⚠️ basic | ❌ none |
-| Contradiction Detection | ✅ auto-flag | ❌ | ❌ |
-| Research Depth | ✅ Deep Dive loops | ⚠️ single pass | ⚠️ single pass |
-| Quality Scoring | ✅ confidence score | ❌ | ❌ |
-| Source Trust Rating | ✅ tiered scoring | ❌ | ❌ |
+The loop stops after 3 rounds even if the gate is still closed.
 
----
-
-## Token Consumption
-
-| Scenario | Token Usage |
-|----------|-------------|
-| Single round | ~140K |
-| Deep Dive +1 | +60K |
-| Full 3-round research | ~320K |
-| 50 researches/day (heavy user) | ~7M/day |
-| Monthly (50/day × 30) | ~210M/month |
-
----
-
-## Confidence Scoring
+## Confidence score
 
 ```
-Score = Source Trust × 30% + Timeliness × 20% + Cross-Validation × 30% + Consistency × 20%
+score = source trust × 30% + timeliness × 20% + cross-validation × 30% + consistency × 20%
 ```
 
-| Source Type | Trust |
-|------------|-------|
-| Official data | 100% |
-| Professional media | 80% |
-| Community / user tests | 60% |
-| Blog / self-media | 40% |
-| Anonymous | 20% |
+Each term is rounded to one decimal before weighting. The demo prints that
+arithmetic so the total can be checked by hand.
 
----
+| Source type | Trust |
+| --- | --- |
+| Official / primary | 100 |
+| Professional media | 80 |
+| Community / hands-on | 60 |
+| Blog / self-media | 40 |
+| Anonymous or unknown | 20 |
 
-## Quick Start
+Timeliness starts at 100 and loses 0.5 points per day of source age, clamped to
+0–100. Cross-validation is the share of facts that have two or more sources and
+do not contradict each other. Consistency is the share of facts with no open
+contradiction.
+
+Coverage (how many sub-questions have a second source) is printed next to the
+score and can keep the loop running. The weighted formula itself has four terms.
+
+## Quick start
+
+Python 3.11 or newer. No third-party packages. `.python-version` pins 3.12.
 
 ```bash
 git clone https://github.com/Shanguier/ideascout.git
 cd ideascout
 
-# Run demo
-PYTHONIOENCODING=utf-8 python3 scripts/research_agent.py "小米 SU7 vs Model 3 对比分析"
+python3 scripts/research_agent.py "小米 SU7 vs Model 3 对比分析"
+python3 scripts/research_agent.py --help
+python3 -m unittest discover -s tests -v
 ```
 
----
+If a console is not UTF-8, set `PYTHONIOENCODING=utf-8` first. The script also
+asks Python to reconfigure stdout to UTF-8 when the runtime allows it.
 
-## Report Structure
+[`demo-output.txt`](demo-output.txt) is the stdout of that quick-start command.
+For this topic the demo runs three rounds and the score moves
+**56.0 → 83.1 → 99.0**. Round 2 is already above 80. Round 3 still runs because
+two sub-questions do not yet have a second source. The number describes the
+simulated cards, not the products named in the topic.
 
-```markdown
-# [Topic] Research Report
+`--interactive` reads one topic from the prompt, or from stdin when stdin is
+piped. `--json` writes the result to stdout and the human log to stderr.
+`--max-rounds` caps Deep Dive (default 3).
 
-## Executive Summary
-One-paragraph key takeaway.
+## What a full agent report contains
 
-## Key Findings
-- Finding 1: [source A + source B]
-- Finding 2: [conflict detected between C and D]
+`SKILL.md` tells a coding agent to gather real sources and write an executive
+summary, findings, a contradiction table, a comparison table, the confidence
+breakdown, and next steps. The reference script prints that shape filled with
+simulated cards, and it says so in the report.
 
-## Contradictions
-| Conflict | Source A | Source B | Suggested Resolution |
-|----------|----------|----------|---------------------|
-| Price | 21.59万 | 22.99万 | Trust official data |
+## Token budget
 
-## Data Comparison
-| Dimension | Option A | Option B |
-|-----------|----------|----------|
-| Price | ... | ... |
+The local script spends no tokens. A coding agent that follows `SKILL.md` and
+does the research itself is a separate cost. These figures are planning guesses
+for a single agent run:
 
-## Confidence Score
-Overall: 85/100
-- Data Completeness: 90%
-- Source Trust: 85%
-- Contradiction Handling: 100%
+| Agent run | Illustrative budget |
+| --- | --- |
+| One pass through the roles | ~140K tokens |
+| One extra Deep Dive round | ~60K tokens |
+| Three rounds | ~320K tokens |
 
-## Next Steps
-- Suggest additional data on X
-```
+## Changelog
 
----
+### 0.2.0 — 2026-10-22
 
-## Tech Stack
-
-- Pure Python — no external API dependencies
-- Local processing — data never leaves your machine
-- SKILL.md driven — runs inside Claude Code
+- Deep Dive rounds add source cards and can pass the quality gate. They no longer repeat one identical failing pass, and the log no longer announces a round that will not run.
+- The printed confidence breakdown is the documented formula. The old completeness line moved the wrong direction as gaps increased.
+- The planner uses the topic you pass in. The analyst no longer prints canned conclusions, and the script prints the report it says it wrote.
+- `--interactive` reads a topic. The flag used to be treated as the topic text.
+- Python 3.11+ is declared. Unit tests, GitHub Actions, [CONTRIBUTING.md](CONTRIBUTING.md), and [SECURITY.md](SECURITY.md) are included.
+- Removed the unbenchmarked product-comparison table and the daily token totals that read like measured user volume.
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
+
+Contributing: [CONTRIBUTING.md](CONTRIBUTING.md). Security: [SECURITY.md](SECURITY.md).

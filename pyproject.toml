@@ -1,0 +1,11 @@
+[project]
+name = "ideascout"
+version = "0.2.0"
+description = "Multi-agent research skill and an offline Python demo of its pipeline."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+authors = [{name = "Shanguier"}]
+
+[project.urls]
+Homepage = "https://github.com/Shanguier/ideascout"
