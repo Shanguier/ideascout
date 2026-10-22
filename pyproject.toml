@@ -1,7 +1,7 @@
 [project]
 name = "ideascout"
-version = "0.2.0"
-description = "Multi-agent research skill and an offline Python demo of its pipeline."
+version = "0.3.0"
+description = "Research skill: one coding agent plays eight roles in series, plus an offline Python demo."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {file = "LICENSE"}

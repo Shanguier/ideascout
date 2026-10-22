@@ -42,12 +42,12 @@ class FormulaTests(unittest.TestCase):
         score, parts = mod.score_confidence(facts)
         self.assertEqual(parts["source_trust"], round((100 + 100 + 20) / 3, 1))
         self.assertEqual(parts["timeliness"], round((100 + 100 + 0) / 3, 1))
-        self.assertEqual(parts["cross_validation"], round(2 / 3 * 100, 1))
+        self.assertEqual(parts["multi_source"], round(2 / 3 * 100, 1))
         self.assertEqual(parts["consistency"], round(2 / 3 * 100, 1))
         weighted = (
             parts["source_trust"] * 0.3
             + parts["timeliness"] * 0.2
-            + parts["cross_validation"] * 0.3
+            + parts["multi_source"] * 0.3
             + parts["consistency"] * 0.2
         )
         self.assertEqual(score, round(weighted, 1))
@@ -74,6 +74,19 @@ class FormulaTests(unittest.TestCase):
         self.assertEqual(mod.freshness(200), 0.0)
         self.assertEqual(mod.freshness(400), 0.0)
 
+    def test_open_contradiction_lowers_consistency_only(self):
+        facts = [
+            {
+                "source_type": "professional",
+                "source_count": 2,
+                "age_days": 0,
+                "contradicted": True,
+            }
+        ]
+        _score, parts = mod.score_confidence(facts)
+        self.assertEqual(parts["multi_source"], 100.0)
+        self.assertEqual(parts["consistency"], 0.0)
+
 
 class GateTests(unittest.TestCase):
     def setUp(self):
@@ -97,6 +110,51 @@ class GateTests(unittest.TestCase):
     def test_stale_boundary_is_over_90_days(self):
         self.assertEqual(mod.gate_failures(95, [{"age_days": 90}], [], []), [])
         self.assertTrue(mod.gate_failures(95, [{"age_days": 91}], [], []))
+
+    def test_history_and_principle_topics_skip_the_age_gate(self):
+        self.assertEqual(mod.freshness_policy("相对论的历史"), "durable")
+        self.assertEqual(mod.freshness_policy("principle of least action"), "durable")
+        self.assertEqual(mod.freshness_policy("勾股定理"), "durable")
+        self.assertEqual(mod.freshness_policy(DEMO_TOPIC), "current")
+        self.assertEqual(mod.freshness_policy("rust vs go"), "current")
+
+        facts = [
+            {
+                "source_type": "professional",
+                "source_count": 2,
+                "age_days": 400,
+                "contradicted": False,
+            }
+        ]
+        score, parts = mod.score_confidence(facts)
+        self.assertLess(score, mod.CONFIDENCE_THRESHOLD)
+        self.assertTrue(
+            mod.gate_failures(score, facts, [], [], policy="current", components=parts)
+        )
+        self.assertEqual(
+            mod.gate_failures(score, facts, [], [], policy="durable", components=parts),
+            [],
+        )
+
+    def test_durable_topic_still_fails_when_other_terms_are_weak(self):
+        facts = [
+            {
+                "source_type": "unknown",
+                "source_count": 1,
+                "age_days": 10,
+                "contradicted": False,
+            }
+        ]
+        score, parts = mod.score_confidence(facts)
+        reasons = mod.gate_failures(
+            score, facts, [], [], policy="durable", components=parts
+        )
+        self.assertTrue(any("循环检查分" in item for item in reasons))
+        self.assertFalse(any("90" in item for item in reasons))
+
+    def test_durable_policy_requires_components(self):
+        with self.assertRaises(ValueError):
+            mod.gate_failures(100, [{"age_days": 1}], [], [], policy="durable")
 
 
 class PlannerTests(unittest.TestCase):
@@ -138,12 +196,15 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(contradictions[0]["resolved"])
         _facts, later = mod.validate_cards(mod.extract_cards(second))
         self.assertTrue(later[0]["resolved"])
+        self.assertEqual(later[0]["rule"], "corroborated_side")
+        self.assertIn("不能单独收束", later[0]["desc"])
 
     def test_demo_topic_climbs_and_stops_on_the_gate(self):
         buf = io.StringIO()
         result = mod.run_pipeline(DEMO_TOPIC, out=buf)
         text = buf.getvalue()
-        self.assertEqual([item["score"] for item in result["rounds"]], [56.0, 83.1, 99.0])
+        self.assertEqual([item["score"] for item in result["rounds"]], [60.8, 83.1, 99.0])
+        self.assertEqual(result["freshness_policy"], "current")
         self.assertEqual([item["source_count"] for item in result["rounds"]], [6, 9, 11])
         self.assertEqual(
             [item["card_count"] for item in result["rounds"]],
@@ -159,6 +220,12 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn("入门门槛更低", text)
         self.assertNotIn("智能驾驶", text)
         self.assertIn("不是对「%s」的真实检索" % DEMO_TOPIC, result["report"])
+        self.assertIn("参考分（不是结论）", result["report"])
+        self.assertIn("多源覆盖: 100.0（权重 30%）", result["report"])
+        self.assertNotIn("交叉验证通过率", result["report"])
+        self.assertNotIn("数据完整性", result["report"])
+        self.assertIn("不是结论", text)
+        self.assertIn("一个进程按 8 个角色串行演示", text)
         self.assertIn(
             "计算: 100.0×0.3 + 94.8×0.2 + 100.0×0.3 + 100.0×0.2 = 99.0",
             result["report"],
@@ -183,6 +250,16 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(result["stopped_reason"], "quality_gate")
         self.assertNotIn("第 4 轮", buf.getvalue())
 
+    def test_history_topic_records_the_durable_exception(self):
+        buf = io.StringIO()
+        result = mod.run_pipeline("欧几里得几何的历史", max_rounds=1, out=buf)
+        text = buf.getvalue()
+        self.assertEqual(result["freshness_policy"], "durable")
+        self.assertIn("历史/原理类", text)
+        self.assertIn("循环检查分", text)
+        self.assertIn("一个进程按 8 个角色串行演示", text)
+        self.assertEqual(len(mod.ROLES), 8)
+
     def test_max_rounds_must_be_positive(self):
         with self.assertRaises(ValueError):
             mod.run_pipeline("topic", max_rounds=0, out=io.StringIO())
@@ -191,6 +268,61 @@ class PipelineTests(unittest.TestCase):
         text = SCRIPT.read_text(encoding="utf-8")
         for banned in ("requests", "urllib", "http.client", "socket"):
             self.assertNotIn("import %s" % banned, text)
+
+
+class ValidatorTests(unittest.TestCase):
+    def test_one_official_card_does_not_close_a_contradiction(self):
+        cards = [
+            {"topic": "t", "source": "o", "source_type": "official", "agrees": True, "age_days": 3},
+            {"topic": "t", "source": "c", "source_type": "community", "agrees": False, "age_days": 3},
+        ]
+        facts, contradictions = mod.validate_cards(cards)
+        self.assertTrue(facts[0]["contradicted"])
+        self.assertEqual(facts[0]["source_type"], "community")
+        self.assertFalse(contradictions[0]["resolved"])
+        self.assertEqual(contradictions[0]["rule"], "open")
+
+    def test_two_weaker_cards_do_not_outvote_one_official(self):
+        cards = [
+            {"topic": "t", "source": "c1", "source_type": "community", "agrees": True, "age_days": 3},
+            {"topic": "t", "source": "c2", "source_type": "community", "agrees": True, "age_days": 3},
+            {"topic": "t", "source": "o", "source_type": "official", "agrees": False, "age_days": 3},
+        ]
+        facts, contradictions = mod.validate_cards(cards)
+        self.assertTrue(facts[0]["contradicted"])
+        self.assertEqual(facts[0]["source_type"], "community")
+        self.assertFalse(contradictions[0]["resolved"])
+
+    def test_two_cards_and_higher_trust_can_close(self):
+        cards = [
+            {"topic": "t", "source": "p", "source_type": "professional", "agrees": True, "age_days": 3},
+            {"topic": "t", "source": "o", "source_type": "official", "agrees": True, "age_days": 3},
+            {"topic": "t", "source": "c", "source_type": "community", "agrees": False, "age_days": 3},
+        ]
+        facts, contradictions = mod.validate_cards(cards)
+        self.assertFalse(facts[0]["contradicted"])
+        self.assertEqual(facts[0]["source_type"], "official")
+        self.assertTrue(contradictions[0]["resolved"])
+        self.assertEqual(contradictions[0]["rule"], "corroborated_side")
+
+
+class DocsTests(unittest.TestCase):
+    def test_skill_trigger_is_narrow(self):
+        text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        front = text.split("---", 2)[1]
+        self.assertNotIn("当用户提到", front)
+        self.assertIn("Do not use", front)
+        self.assertIn("IdeaScout", front)
+        for bare in ("「研究」", "「调研」", "「分析」", "「对比」", "「怎么做」"):
+            self.assertNotIn(bare, front)
+
+    def test_readme_names_one_agent_and_eight_roles(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        head = "\n".join(readme.splitlines()[:8]).lower()
+        self.assertIn("eight roles", head)
+        self.assertIn("one coding agent", head)
+        self.assertNotIn("six experts", head)
+        self.assertNotIn("multi-agent", readme.lower())
 
 
 class CliTests(unittest.TestCase):
@@ -229,7 +361,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         payload = json.loads(proc.stdout)
         self.assertEqual(payload["topic"], DEMO_TOPIC)
-        self.assertEqual(payload["score"], 56.0)
+        self.assertEqual(payload["score"], 60.8)
         self.assertEqual(payload["stopped_reason"], "max_rounds")
         self.assertEqual(payload["version"], mod.__version__)
         self.assertIn("本地演示", proc.stderr)
